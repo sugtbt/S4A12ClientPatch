@@ -9,10 +9,6 @@
 #include <fcntl.h>
 #include <io.h>
 
-#define DEBUG
-#define TARGET_IP          "127.0.0.1"
-#define TARGET_IP_SLASH    TARGET_IP "/"
-
 static std::wstring HexToWString(const unsigned char* data, size_t length)
 {
 	std::wstringstream wss;
@@ -122,6 +118,16 @@ static void LogMessageW(const wchar_t* format, ...)
 	printf("%s\n", utf8Buf);
 	delete[] utf8Buf;
 	utf8Buf = nullptr;
+}
+
+// 获取exe执行程序路径
+static std::string GetProgramDir()
+{
+	char szDir[2048] = { 0 };
+	::GetModuleFileNameA(NULL, szDir, sizeof(szDir));
+	std::string strResult = szDir;
+	strResult = strResult.substr(0, strResult.find_last_of("\\"));
+	return strResult;
 }
 
 static void CreateLocalConsole()

@@ -71,6 +71,7 @@
   <ItemGroup>
     <ClInclude Include="86JP.h" />
     <ClInclude Include="HookInterface.h" />
+    <ClInclude Include="xini_file.h" />
     <ClInclude Include="XLog.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />

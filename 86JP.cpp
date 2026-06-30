@@ -1,6 +1,7 @@
 #include "86JP.h"
 #include "HookInterface.h"
 #include "XLog.h"
+#include "xini_file.h"
 
 #include <intrin.h>
 #include <mutex>
@@ -9,18 +10,22 @@
 
 static uintptr_t dnf_base = 0;
 static uintptr_t net_base = 0;
+int featDebug = 0;
+int featGameHost = 0;
+std::string PublicIP = "127.0.0.1";
 
 typedef ULONG(WINAPI* fnInetAddr)(PCSTR);
 fnInetAddr o_InetAddr = nullptr;
 ULONG WINAPI Proxy_InetAddr(PCSTR cpIp)
 {
+
 	if (strcmp(cpIp, "127.0.0.1") == 0) {
-		cpIp = TARGET_IP;
+		cpIp = PublicIP.c_str();
 	}
 	else if (strcmp(cpIp, "127.0.0.1/") == 0) {
-		cpIp = TARGET_IP_SLASH;
+		cpIp = PublicIP.c_str() + '/';
 	}
-
+	printf("[Proxy_InetAddr] cpIp = %s\n", cpIp);
 	o_InetAddr = reinterpret_cast<fnInetAddr>(Hook_GetTrampoline(net_base));
 	return o_InetAddr(cpIp);
 }
@@ -59,9 +64,9 @@ void __cdecl ProxyGameLog(int a1, wchar_t* source_path, wchar_t* function_name, 
 	if (outputBuffer) {
 		AppendFileLogFormatLine(L"GameLog.log", L"[%s] [%d] [%s]", function_name, logType, outputBuffer);
 
-#ifdef DEBUG
-		LogMessageW(L"[%s] [%d] [%s]", function_name, logType, outputBuffer);
-#endif
+		if (featDebug) {
+			LogMessageW(L"[%s] [%d] [%s]", function_name, logType, outputBuffer);
+		}
 	}
 
 	if (dynamicBuffer) {
@@ -98,16 +103,18 @@ unsigned int DelayHook(void*)
 	Hook_Inline(reinterpret_cast<void*>(dnf_base + 0x01C11360), Proxy_CipherEncrypt);
 	Hook_Inline(reinterpret_cast<void*>(dnf_base + 0x01CF9700), ProxyGameLog);
 
-	HMODULE hWs2 = GetModuleHandleW(L"ws2_32.dll");
-	if (hWs2)
-	{
-		net_base = (uintptr_t)GetProcAddress(hWs2, "inet_addr");
-		if (net_base)
+	if (featGameHost) {
+		HMODULE hWs2 = GetModuleHandleW(L"ws2_32.dll");
+		if (hWs2)
 		{
-			Hook_Inline((LPVOID)net_base, Proxy_InetAddr);
+			net_base = (uintptr_t)GetProcAddress(hWs2, "inet_addr");
+			if (net_base)
+			{
+				Hook_Inline((LPVOID)net_base, Proxy_InetAddr);
+			}
 		}
+		return 0;
 	}
-	return 0;
 }
 
 void PluginEntry()
@@ -140,6 +147,21 @@ VOID WINAPI Proxy_GetStartupInfoW(_Out_ LPSTARTUPINFOW lpStartupInfo)
 	orifunc(lpStartupInfo);
 }
 
+void LoadConfig() {
+	std::string programDir = GetProgramDir();
+	std::string config_file = programDir + '\\' + "86JP.ini";
+	xini_file_t xini_file(config_file); // 初始化
+	std::string programPath = programDir + "\\DNF.exe";
+
+	featDebug = xini_file["系统配置"]["Debug"].try_value(0); // 0关闭 1开启
+	featGameHost = xini_file["系统配置"]["PublicEnable"].try_value(0); // 0关闭 1开启
+	PublicIP = (const char*)xini_file["系统配置"]["PublicIP"].try_value("127.0.0.1"); // PublicEnable 1时启用
+
+	if (featDebug) {
+		CreateLocalConsole();
+	}
+}
+
 void JPEntry()
 {
 	dnf_base = reinterpret_cast<uintptr_t>(GetModuleHandleW(L"DNF.exe"));
@@ -150,7 +172,4 @@ void JPEntry()
 		g_Ptr_GetStartupInfoW = (uintptr_t)GetProcAddress(kernel32, "GetStartupInfoW");
 		Hook_Inline(reinterpret_cast<void*>(g_Ptr_GetStartupInfoW), Proxy_GetStartupInfoW);
 	}
-#ifdef DEBUG
-	CreateLocalConsole();
-#endif
 }
