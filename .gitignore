@@ -1,0 +1,45 @@
+# Prerequisites
+*.d
+
+# Compiled Object files
+*.slo
+*.lo
+*.o
+*.obj
+
+# Precompiled Headers
+*.gch
+*.pch
+
+# Compiled Dynamic libraries
+*.so
+*.dylib
+*.dll
+
+# Fortran module files
+*.mod
+*.smod
+
+# Compiled Static libraries
+# *.lai
+# *.la
+# *.a
+# *.lib
+
+# Executables
+*.exe
+*.out
+*.app
+
+# 忽略IDE生成的项目文件和临时文件
+.vs/
+.DS_Store
+
+# 忽略构建输出目录
+Debug
+Release
+x64
+Win32
+/bin/
+/obj/
+/out/
