@@ -150,12 +150,12 @@ VOID WINAPI Proxy_GetStartupInfoW(_Out_ LPSTARTUPINFOW lpStartupInfo)
 void LoadConfig() {
 	std::string programDir = GetProgramDir();
 	std::string config_file = programDir + '\\' + "86JP.ini";
-	xini_file_t xini_file(config_file); // 初始化
+	xini_file_t xini_file(config_file);
 	std::string programPath = programDir + "\\DNF.exe";
 
-	featDebug = xini_file["系统配置"]["Debug"].try_value(0); // 0关闭 1开启
-	featGameHost = xini_file["系统配置"]["PublicEnable"].try_value(0); // 0关闭 1开启
-	PublicIP = (const char*)xini_file["系统配置"]["PublicIP"].try_value("127.0.0.1"); // PublicEnable 1时启用
+	featDebug = xini_file["SystemConfig"]["Debug"].try_value(0); // 0 Disable  1 Enable
+	featGameHost = xini_file["SystemConfig"]["PublicEnable"].try_value(0); // 0 Disable  1 Enable
+	PublicIP = (const char*)xini_file["SystemConfig"]["PublicIP"].try_value("127.0.0.1"); // PublicEnable=1 Enable
 
 	if (featDebug) {
 		CreateLocalConsole();
