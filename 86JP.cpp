@@ -9,7 +9,7 @@
 #pragma comment(lib, "user32.lib")
 
 static uintptr_t dnf_base = 0;
-static uintptr_t net_base = 0;
+static uintptr_t g_Ptr_inet_addr = 0;
 int featDebug = 0;
 int featGameHost = 0;
 std::string PublicIP = "127.0.0.1";
@@ -18,16 +18,19 @@ typedef ULONG(WINAPI* fnInetAddr)(PCSTR);
 fnInetAddr o_InetAddr = nullptr;
 ULONG WINAPI Proxy_InetAddr(PCSTR cpIp)
 {
-
+	std::string targetIP;
 	if (strcmp(cpIp, "127.0.0.1") == 0) {
-		cpIp = PublicIP.c_str();
+		targetIP = PublicIP;
 	}
 	else if (strcmp(cpIp, "127.0.0.1/") == 0) {
-		cpIp = PublicIP.c_str() + '/';
+		targetIP = PublicIP + "/";
 	}
-	printf("[Proxy_InetAddr] cpIp = %s\n", cpIp);
-	o_InetAddr = reinterpret_cast<fnInetAddr>(Hook_GetTrampoline(net_base));
-	return o_InetAddr(cpIp);
+	else {
+		targetIP = cpIp;
+	}
+
+	printf("[Proxy_InetAddr] %s -> %s\n", cpIp, targetIP.c_str());
+	return o_InetAddr ? o_InetAddr(targetIP.c_str()) : (ULONG)-1;
 }
 
 void __cdecl ProxyGameLog(int a1, wchar_t* source_path, wchar_t* function_name, int logType, wchar_t* Format, ...)
@@ -107,14 +110,15 @@ unsigned int DelayHook(void*)
 		HMODULE hWs2 = GetModuleHandleW(L"ws2_32.dll");
 		if (hWs2)
 		{
-			net_base = (uintptr_t)GetProcAddress(hWs2, "inet_addr");
-			if (net_base)
+			g_Ptr_inet_addr = (uintptr_t)GetProcAddress(hWs2, "inet_addr");
+			if (g_Ptr_inet_addr && Hook_Inline((LPVOID)g_Ptr_inet_addr, Proxy_InetAddr))
 			{
-				Hook_Inline((LPVOID)net_base, Proxy_InetAddr);
+				o_InetAddr = reinterpret_cast<fnInetAddr>(Hook_GetTrampoline(g_Ptr_inet_addr));
 			}
 		}
-		return 0;
 	}
+
+	return 0;
 }
 
 void PluginEntry()
@@ -150,12 +154,12 @@ VOID WINAPI Proxy_GetStartupInfoW(_Out_ LPSTARTUPINFOW lpStartupInfo)
 void LoadConfig() {
 	std::string programDir = GetProgramDir();
 	std::string config_file = programDir + '\\' + "86JP.ini";
-	xini_file_t xini_file(config_file); // 初始化
+	xini_file_t xini_file(config_file);
 	std::string programPath = programDir + "\\DNF.exe";
 
-	featDebug = xini_file["系统配置"]["Debug"].try_value(0); // 0关闭 1开启
-	featGameHost = xini_file["系统配置"]["PublicEnable"].try_value(0); // 0关闭 1开启
-	PublicIP = (const char*)xini_file["系统配置"]["PublicIP"].try_value("127.0.0.1"); // PublicEnable 1时启用
+	featDebug = xini_file["SystemConfig"]["Debug"].try_value(0); // 0 Disable  1 Enable
+	featGameHost = xini_file["SystemConfig"]["PublicEnable"].try_value(0); // 0 Disable  1 Enable
+	PublicIP = (const char*)xini_file["SystemConfig"]["PublicIP"].try_value("127.0.0.1"); // PublicEnable=1 Enable
 
 	if (featDebug) {
 		CreateLocalConsole();

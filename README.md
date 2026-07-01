@@ -10,7 +10,7 @@
 ```ini
 # 86JP.ini
 
-[系统配置]
+[SystemConfig]
 Debug = 0              # 日志 1开启 0关闭
 PublicEnable = 0       # 自定义收发包 1开启 0关闭
 PublicIP = 127.0.0.1   # PublicEnable=1时生效
