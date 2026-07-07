@@ -29,7 +29,9 @@ ULONG WINAPI Proxy_InetAddr(PCSTR cpIp)
 		targetIP = cpIp;
 	}
 
-	printf("[Proxy_InetAddr] %s -> %s\n", cpIp, targetIP.c_str());
+	if (featDebug) {
+		printf("[Proxy_InetAddr] %s -> %s\n", cpIp, targetIP.c_str());
+	}
 	return o_InetAddr ? o_InetAddr(targetIP.c_str()) : (ULONG)-1;
 }
 
@@ -153,13 +155,12 @@ VOID WINAPI Proxy_GetStartupInfoW(_Out_ LPSTARTUPINFOW lpStartupInfo)
 
 void LoadConfig() {
 	std::string programDir = GetProgramDir();
-	std::string config_file = programDir + '\\' + "86JP.ini";
+	std::string config_file = programDir + "\\86JP.ini";
 	xini_file_t xini_file(config_file);
-	std::string programPath = programDir + "\\DNF.exe";
 
 	featDebug = xini_file["SystemConfig"]["Debug"].try_value(0); // 0 Disable  1 Enable
 	featGameHost = xini_file["SystemConfig"]["PublicEnable"].try_value(0); // 0 Disable  1 Enable
-	PublicIP = (const char*)xini_file["SystemConfig"]["PublicIP"].try_value("127.0.0.1"); // PublicEnable=1 Enable
+	PublicIP = xini_file["SystemConfig"]["PublicIP"].try_value("127.0.0.1"); // PublicEnable=1 Enable
 
 	if (featDebug) {
 		CreateLocalConsole();
