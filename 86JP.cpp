@@ -88,13 +88,123 @@ int __fastcall Proxy_CipherEncrypt(void* This, void* NotUsed, int packet_type, c
 	return 1;
 }
 
-static uintptr_t g_Ptr_SendMessageW = 0;
-LRESULT WINAPI Proxy_SendMessageW(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lParam)
+static uintptr_t g_Ptr_CharacterNameFilter = 0;
+static uintptr_t g_Ptr_LegacyEditUpdate = 0;
+static uintptr_t g_Ptr_CheckDuplicateNameResult = 0;
+using CharacterNameFilterFn = void(__thiscall*)(void* self, void* insertion, const wchar_t* existingText, int insertionIndex);
+using LegacyEditUpdateFn = void(__thiscall*)(void* self);
+using CheckDuplicateNameResultFn = void(__cdecl*)(int command, int result, int errorCode);
+static thread_local int g_CharacterNameEditDepth = 0;
+
+struct ClientWideString
 {
-	if (Msg == 0x111 && wParam == 0x19F && lParam == 0)
-		return 0;
-	auto original = reinterpret_cast<decltype(&Proxy_SendMessageW)>(Hook_GetTrampoline(g_Ptr_SendMessageW));
-	return original(hWnd, Msg, wParam, lParam);
+	unsigned int reserved;
+	union
+	{
+		wchar_t inlineText[8];
+		wchar_t* heapText;
+	} storage;
+	unsigned int length;
+	unsigned int capacity;
+};
+static_assert(offsetof(ClientWideString, length) == 0x14, "Unexpected client wide-string length offset");
+static_assert(offsetof(ClientWideString, capacity) == 0x18, "Unexpected client wide-string capacity offset");
+
+static const wchar_t kDuplicateNameNotice[] =
+	L"\u89D2\u8272\u540D\u5DF2\u5B58\u5728\uFF0C\u8BF7\u91CD\u65B0\u8F93\u5165\u3002";
+
+void __cdecl Proxy_CheckDuplicateNameResult(int command, int result, int errorCode)
+{
+	auto original = reinterpret_cast<CheckDuplicateNameResultFn>(
+		Hook_GetTrampoline(g_Ptr_CheckDuplicateNameResult));
+	original(command, result, errorCode);
+
+	// CMD 0x02B5 returns [00 00] when the name is already in use.
+	if ((result & 0xFF) == 0 && (errorCode & 0xFF) == 0)
+	{
+		using ShowNoticeFn = void(__thiscall*)(void* manager, int noticeId, const wchar_t* text, int flags);
+		auto showNotice = reinterpret_cast<ShowNoticeFn>(dnf_base + 0x0189CFB0);
+		void* manager = *reinterpret_cast<void**>(dnf_base + 0x02C91F7C);
+		if (manager != NULL)
+			showNotice(manager, 0x1BB, kDuplicateNameNotice, 0);
+	}
+}
+
+static bool IsCharacterCreationNameEdit(void* self)
+{
+	const auto fields = reinterpret_cast<const unsigned int*>(self);
+	return fields[0] == dnf_base + 0x028F6CFC &&
+		fields[0x360 / 4] == 12 &&
+		fields[0x364 / 4] == 0x87;
+}
+
+void __fastcall Proxy_LegacyEditUpdate(void* self, void* /*edx*/)
+{
+	const bool isCharacterNameEdit = IsCharacterCreationNameEdit(self);
+	if (isCharacterNameEdit)
+		++g_CharacterNameEditDepth;
+
+	auto original = reinterpret_cast<LegacyEditUpdateFn>(
+		Hook_GetTrampoline(g_Ptr_LegacyEditUpdate));
+	original(self);
+
+	if (isCharacterNameEdit)
+		--g_CharacterNameEditDepth;
+}
+
+static unsigned int GetCharacterNameWidth(const wchar_t* text, unsigned int length)
+{
+	unsigned int width = 0;
+	for (unsigned int i = 0; text != NULL && i < length; ++i)
+		width += text[i] <= 0x7F ? 1 : 2;
+	return width;
+}
+
+void __fastcall Proxy_CharacterNameFilter(
+	void* self,
+	void* /*edx*/,
+	void* insertion,
+	const wchar_t* existingText,
+	int insertionIndex)
+{
+	auto original = reinterpret_cast<CharacterNameFilterFn>(
+		Hook_GetTrampoline(g_Ptr_CharacterNameFilter));
+	const auto configuredLimit = reinterpret_cast<const unsigned int*>(
+		reinterpret_cast<const unsigned char*>(self) + 4);
+	if (g_CharacterNameEditDepth <= 0 || *configuredLimit != 12 || insertion == NULL)
+	{
+		original(self, insertion, existingText, insertionIndex);
+		return;
+	}
+
+	auto pending = reinterpret_cast<ClientWideString*>(insertion);
+	wchar_t* pendingText = pending->capacity >= 8
+		? pending->storage.heapText
+		: pending->storage.inlineText;
+	const unsigned int existingLength = existingText == NULL
+		? 0
+		: static_cast<unsigned int>(wcslen(existingText));
+	const unsigned int existingWidth = GetCharacterNameWidth(existingText, existingLength);
+	const unsigned int remainingWidth = existingWidth >= *configuredLimit
+		? 0
+		: *configuredLimit - existingWidth;
+
+	unsigned int prefixLength = 0;
+	unsigned int prefixWidth = 0;
+	while (prefixLength < pending->length)
+	{
+		const unsigned int nextWidth = pendingText[prefixLength] <= 0x7F ? 1 : 2;
+		if (prefixWidth + nextWidth > remainingWidth)
+			break;
+		prefixWidth += nextWidth;
+		++prefixLength;
+	}
+
+	if (prefixLength < pending->length)
+	{
+		pendingText[prefixLength] = L'\0';
+		pending->length = prefixLength;
+	}
 }
 
 unsigned int DelayHook(void*)
@@ -132,14 +242,12 @@ void PluginEntry()
 	CreateThread(NULL, 0, (LPTHREAD_START_ROUTINE)DelayHook, NULL, 0, NULL);
 
 	Hook_Inline(reinterpret_cast<void*>(dnf_base + 0x01CF9700), ProxyGameLog);
-	Hook_Inline(reinterpret_cast<void*>(dnf_base + 0x01CF9800), ProxyGameLog);
-
-	auto user32 = GetModuleHandleW(L"user32.dll");
-	if (user32)
-	{
-		g_Ptr_SendMessageW = (uintptr_t)GetProcAddress(user32, "SendMessageW");
-		Hook_Inline(reinterpret_cast<void*>(g_Ptr_SendMessageW), Proxy_SendMessageW);
-	}
+	g_Ptr_LegacyEditUpdate = dnf_base + 0x01D1D190;
+	Hook_Inline(reinterpret_cast<void*>(g_Ptr_LegacyEditUpdate), Proxy_LegacyEditUpdate);
+	g_Ptr_CharacterNameFilter = dnf_base + 0x01DB3800;
+	Hook_Inline(reinterpret_cast<void*>(g_Ptr_CharacterNameFilter), Proxy_CharacterNameFilter);
+	g_Ptr_CheckDuplicateNameResult = dnf_base + 0x008C5E30;
+	Hook_Inline(reinterpret_cast<void*>(g_Ptr_CheckDuplicateNameResult), Proxy_CheckDuplicateNameResult);
 }
 
 uintptr_t g_Ptr_GetStartupInfoW = 0;
