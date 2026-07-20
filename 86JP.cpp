@@ -88,6 +88,16 @@ int __fastcall Proxy_CipherEncrypt(void* This, void* NotUsed, int packet_type, c
 	return 1;
 }
 
+static uintptr_t g_Ptr_SendMessageW = 0;
+LRESULT WINAPI Proxy_SendMessageW(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lParam)
+{
+	if (Msg == WM_COMMAND && wParam == 0x19F && lParam == 0)
+		return 0;
+	auto original = reinterpret_cast<decltype(&Proxy_SendMessageW)>(
+		Hook_GetTrampoline(g_Ptr_SendMessageW));
+	return original(hWnd, Msg, wParam, lParam);
+}
+
 static uintptr_t g_Ptr_CharacterNameFilter = 0;
 static uintptr_t g_Ptr_LegacyEditUpdate = 0;
 static uintptr_t g_Ptr_CheckDuplicateNameResult = 0;
@@ -242,6 +252,14 @@ void PluginEntry()
 	CreateThread(NULL, 0, (LPTHREAD_START_ROUTINE)DelayHook, NULL, 0, NULL);
 
 	Hook_Inline(reinterpret_cast<void*>(dnf_base + 0x01CF9700), ProxyGameLog);
+	Hook_Inline(reinterpret_cast<void*>(dnf_base + 0x01CF9800), ProxyGameLog);
+	auto user32 = GetModuleHandleW(L"user32.dll");
+	if (user32)
+	{
+		g_Ptr_SendMessageW = reinterpret_cast<uintptr_t>(GetProcAddress(user32, "SendMessageW"));
+		if (g_Ptr_SendMessageW)
+			Hook_Inline(reinterpret_cast<void*>(g_Ptr_SendMessageW), Proxy_SendMessageW);
+	}
 	g_Ptr_LegacyEditUpdate = dnf_base + 0x01D1D190;
 	Hook_Inline(reinterpret_cast<void*>(g_Ptr_LegacyEditUpdate), Proxy_LegacyEditUpdate);
 	g_Ptr_CharacterNameFilter = dnf_base + 0x01DB3800;
