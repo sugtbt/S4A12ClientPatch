@@ -100,10 +100,8 @@ LRESULT WINAPI Proxy_SendMessageW(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lPa
 
 static uintptr_t g_Ptr_CharacterNameFilter = 0;
 static uintptr_t g_Ptr_LegacyEditUpdate = 0;
-static uintptr_t g_Ptr_CheckDuplicateNameResult = 0;
 using CharacterNameFilterFn = void(__thiscall*)(void* self, void* insertion, const wchar_t* existingText, int insertionIndex);
 using LegacyEditUpdateFn = void(__thiscall*)(void* self);
-using CheckDuplicateNameResultFn = void(__cdecl*)(int command, int result, int errorCode);
 static thread_local int g_CharacterNameEditDepth = 0;
 
 struct ClientWideString
@@ -119,26 +117,6 @@ struct ClientWideString
 };
 static_assert(offsetof(ClientWideString, length) == 0x14, "Unexpected client wide-string length offset");
 static_assert(offsetof(ClientWideString, capacity) == 0x18, "Unexpected client wide-string capacity offset");
-
-static const wchar_t kDuplicateNameNotice[] =
-	L"\u89D2\u8272\u540D\u5DF2\u5B58\u5728\uFF0C\u8BF7\u91CD\u65B0\u8F93\u5165\u3002";
-
-void __cdecl Proxy_CheckDuplicateNameResult(int command, int result, int errorCode)
-{
-	auto original = reinterpret_cast<CheckDuplicateNameResultFn>(
-		Hook_GetTrampoline(g_Ptr_CheckDuplicateNameResult));
-	original(command, result, errorCode);
-
-	// CMD 0x02B5 returns [00 00] when the name is already in use.
-	if ((result & 0xFF) == 0 && (errorCode & 0xFF) == 0)
-	{
-		using ShowNoticeFn = void(__thiscall*)(void* manager, int noticeId, const wchar_t* text, int flags);
-		auto showNotice = reinterpret_cast<ShowNoticeFn>(dnf_base + 0x0189CFB0);
-		void* manager = *reinterpret_cast<void**>(dnf_base + 0x02C91F7C);
-		if (manager != NULL)
-			showNotice(manager, 0x1BB, kDuplicateNameNotice, 0);
-	}
-}
 
 static bool IsCharacterCreationNameEdit(void* self)
 {
@@ -264,8 +242,6 @@ void PluginEntry()
 	Hook_Inline(reinterpret_cast<void*>(g_Ptr_LegacyEditUpdate), Proxy_LegacyEditUpdate);
 	g_Ptr_CharacterNameFilter = dnf_base + 0x01DB3800;
 	Hook_Inline(reinterpret_cast<void*>(g_Ptr_CharacterNameFilter), Proxy_CharacterNameFilter);
-	g_Ptr_CheckDuplicateNameResult = dnf_base + 0x008C5E30;
-	Hook_Inline(reinterpret_cast<void*>(g_Ptr_CheckDuplicateNameResult), Proxy_CheckDuplicateNameResult);
 }
 
 uintptr_t g_Ptr_GetStartupInfoW = 0;
