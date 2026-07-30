@@ -1,4 +1,4 @@
-#include <windows.h>
+﻿#include <windows.h>
 #include "86JP.h"
 
 #define EXPAPI(Name) EXTERN_C __declspec(dllexport) void Name() {}

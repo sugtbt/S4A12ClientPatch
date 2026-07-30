@@ -1,4 +1,4 @@
-#include "86JP.h"
+﻿#include "86JP.h"
 #include "HookInterface.h"
 #include "XLog.h"
 #include "xini_file.h"

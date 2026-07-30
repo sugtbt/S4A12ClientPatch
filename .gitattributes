@@ -1,0 +1,15 @@
+# 本仓统一约定: 源代码文件 = UTF-8 with BOM, CRLF 行尾。
+# git 属性无法强制 BOM(仅 UTF-16 支持 BOM 语义), 因此约定如下:
+# - 所有 .c/.cpp/.h/.hpp/.rc/.sln/.vcxproj/.vcxproj.user 文件提交前必须为 UTF-8 with BOM
+# - 检查: 文件头三字节应为 EF BB BF
+# - GBK/GB2312 遗留文件先转码(iconv -f GB18030 -t UTF-8)再加 BOM
+
+*.c            text eol=crlf
+*.cpp          text eol=crlf
+*.h            text eol=crlf
+*.hpp          text eol=crlf
+*.rc           text eol=crlf
+*.sln          text eol=crlf
+*.vcxproj      text eol=crlf
+*.vcxproj.user text eol=crlf
+*.md           text eol=crlf
