@@ -1,12 +1,13 @@
 # ClientPatch
 
-客户端多功能补丁，首次加载86JP.dll插件时，会自动生成86JP.ini配置文件。
+客户端多功能补丁，`ijl15.dll` 使用客户端原版 IJL。`Az.dll` 固定加载
+`GameGaurd.dll`，再由 `GameGaurd.dll` 按配置加载其他补丁插件。
 
 ### 自定义补丁功能
 
 - 控制台调试日志
 - 自定义收发包
-- 阻止客户端启动时最小化其他窗口
+- 阻止客户端启动时最小化其他窗口（`PreventMinimize.dll`）
 
 ```ini
 # 86JP.ini
@@ -20,17 +21,10 @@ PublicIP = 127.0.0.1   # PublicEnable=1时生效
 ### 调用链路初识
 
 ```text
-ijl15.dll → 加载86JP.dll补丁插件
-    1. LoadConfig() 读取配置信息(开启日志)
-    2. DisableThreadLibraryCalls 关闭线程通知
-    3. JPEntry() 初始化
-        → Hook kernel32!GetStartupInfoW
-            → 主模块地址 dnf_base + 0x04AE71A5，触发执行PluginEntry()
-                1. Hook 游戏日志函数、SendMessageW窗口消息
-                2. DelayHook 延迟线程(等待GameGuard.dll)
-                    - 数据包解密 Proxy_CipherEncrypt
-                    - 游戏日志 ProxyGameLog
-                    - Hook收发包 ws2_32!inet_addr
+Az.dll → 加载 GameGaurd.dll
+GameGaurd.dll → 应用客户端兼容补丁 → 读取 GameGaurd.ini → 加载并初始化插件
+PreventMinimize.dll → 阻止客户端最小化其他窗口
+86JP.dll → 读取 86JP.ini → 安装日志和地址转换 Hook
 ```
 
 ### GameGaurd.dll IDA交叉引用

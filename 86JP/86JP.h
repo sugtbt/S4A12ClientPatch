@@ -1,4 +1,4 @@
 ﻿#pragma once
 
 void LoadConfig();
-void JPEntry();
+void PluginEntry();

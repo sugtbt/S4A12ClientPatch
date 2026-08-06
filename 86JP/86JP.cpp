@@ -3,7 +3,6 @@
 #include "XLog.h"
 #include "xini_file.h"
 
-#include <intrin.h>
 #include <mutex>
 
 #pragma comment(lib, "user32.lib")
@@ -86,16 +85,6 @@ int __fastcall Proxy_CipherEncrypt(void* This, void* NotUsed, int packet_type, c
 	*out_size = in_size;
 	memcpy(out_put, input, in_size);
 	return 1;
-}
-
-static uintptr_t g_Ptr_SendMessageW = 0;
-LRESULT WINAPI Proxy_SendMessageW(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lParam)
-{
-	if (Msg == WM_COMMAND && wParam == 0x19F && lParam == 0)
-		return 0;
-	auto original = reinterpret_cast<decltype(&Proxy_SendMessageW)>(
-		Hook_GetTrampoline(g_Ptr_SendMessageW));
-	return original(hWnd, Msg, wParam, lParam);
 }
 
 static uintptr_t g_Ptr_CharacterNameFilter = 0;
@@ -195,64 +184,34 @@ void __fastcall Proxy_CharacterNameFilter(
 	}
 }
 
-unsigned int DelayHook(void*)
-{
-	do
-	{
-		Sleep(100);
-	} while (nullptr == GetModuleHandleW(L"GameGaurd.dll"));
-
-	Sleep(1000);
-	Hook_Inline(reinterpret_cast<void*>(dnf_base + 0x01C11360), Proxy_CipherEncrypt);
-	Hook_Inline(reinterpret_cast<void*>(dnf_base + 0x01CF9700), ProxyGameLog);
-
-	if (featGameHost) {
-		HMODULE hWs2 = GetModuleHandleW(L"ws2_32.dll");
-		if (hWs2)
-		{
-			g_Ptr_inet_addr = (uintptr_t)GetProcAddress(hWs2, "inet_addr");
-			if (g_Ptr_inet_addr && Hook_Inline((LPVOID)g_Ptr_inet_addr, Proxy_InetAddr))
-			{
-				o_InetAddr = reinterpret_cast<fnInetAddr>(Hook_GetTrampoline(g_Ptr_inet_addr));
-			}
-		}
-	}
-
-	return 0;
-}
-
 void PluginEntry()
 {
 	dnf_base = reinterpret_cast<uintptr_t>(GetModuleHandleW(L"DNF.exe"));
 
 	DeleteFileW(L"GameLog.log");
 
-	CreateThread(NULL, 0, (LPTHREAD_START_ROUTINE)DelayHook, NULL, 0, NULL);
-
+	Hook_Inline(reinterpret_cast<void*>(dnf_base + 0x01C11360), Proxy_CipherEncrypt);
 	Hook_Inline(reinterpret_cast<void*>(dnf_base + 0x01CF9700), ProxyGameLog);
 	Hook_Inline(reinterpret_cast<void*>(dnf_base + 0x01CF9800), ProxyGameLog);
-	auto user32 = GetModuleHandleW(L"user32.dll");
-	if (user32)
+	if (featGameHost)
 	{
-		g_Ptr_SendMessageW = reinterpret_cast<uintptr_t>(GetProcAddress(user32, "SendMessageW"));
-		if (g_Ptr_SendMessageW)
-			Hook_Inline(reinterpret_cast<void*>(g_Ptr_SendMessageW), Proxy_SendMessageW);
+		HMODULE ws2 = GetModuleHandleW(L"ws2_32.dll");
+		if (ws2)
+		{
+			g_Ptr_inet_addr = reinterpret_cast<uintptr_t>(
+				GetProcAddress(ws2, "inet_addr"));
+			if (g_Ptr_inet_addr &&
+				Hook_Inline(reinterpret_cast<void*>(g_Ptr_inet_addr), Proxy_InetAddr))
+			{
+				o_InetAddr = reinterpret_cast<fnInetAddr>(
+					Hook_GetTrampoline(g_Ptr_inet_addr));
+			}
+		}
 	}
 	g_Ptr_LegacyEditUpdate = dnf_base + 0x01D1D190;
 	Hook_Inline(reinterpret_cast<void*>(g_Ptr_LegacyEditUpdate), Proxy_LegacyEditUpdate);
 	g_Ptr_CharacterNameFilter = dnf_base + 0x01DB3800;
 	Hook_Inline(reinterpret_cast<void*>(g_Ptr_CharacterNameFilter), Proxy_CharacterNameFilter);
-}
-
-uintptr_t g_Ptr_GetStartupInfoW = 0;
-VOID WINAPI Proxy_GetStartupInfoW(_Out_ LPSTARTUPINFOW lpStartupInfo)
-{
-	auto return_addr = (uintptr_t)_ReturnAddress();
-	if (return_addr == dnf_base + 0x04AE71A5)
-		PluginEntry();
-
-	auto orifunc = reinterpret_cast<decltype(&Proxy_GetStartupInfoW)>(Hook_GetTrampoline(g_Ptr_GetStartupInfoW));
-	orifunc(lpStartupInfo);
 }
 
 void LoadConfig() {
@@ -266,17 +225,5 @@ void LoadConfig() {
 
 	if (featDebug) {
 		CreateLocalConsole();
-	}
-}
-
-void JPEntry()
-{
-	dnf_base = reinterpret_cast<uintptr_t>(GetModuleHandleW(L"DNF.exe"));
-
-	auto kernel32 = GetModuleHandleW(L"kernel32.dll");
-	if (kernel32)
-	{
-		g_Ptr_GetStartupInfoW = (uintptr_t)GetProcAddress(kernel32, "GetStartupInfoW");
-		Hook_Inline(reinterpret_cast<void*>(g_Ptr_GetStartupInfoW), Proxy_GetStartupInfoW);
 	}
 }
