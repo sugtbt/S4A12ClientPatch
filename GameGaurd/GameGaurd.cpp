@@ -1,8 +1,132 @@
 ﻿#include "mem.h"
 
+#include "PluginLoader.h"
+
+#include <cstring>
+#include <initializer_list>
+
+namespace
+{
+constexpr uintptr_t kRegisterNotiPacketHandler = 0x01189FC0;
+constexpr uintptr_t kWriteMessage = 0x01503530;
+constexpr uintptr_t kMessageWindowPointer = 0x03189138;
+constexpr uintptr_t kGameSocketPointer = 0x0319A114;
+
+using RegisterNotiPacketHandler = int(__thiscall*)(
+    void*, uintptr_t, uintptr_t, uintptr_t);
+using WriteMessage = int(__thiscall*)(
+    void*, uintptr_t, uintptr_t, uintptr_t, int, int, int);
+}
+
 // ============================================================
 // Static byte patches — addresses from live memory analysis
 // ============================================================
+
+static bool PatchBytes(uintptr_t address,
+    std::initializer_list<uint8_t> expected,
+    std::initializer_list<uint8_t> replacement)
+{
+    if (expected.size() != replacement.size())
+        return false;
+
+    std::vector<uint8_t> current(expected.size(), 0);
+    mem::read(address, current.data(), current.size());
+    const std::vector<uint8_t> oldBytes(expected);
+    const std::vector<uint8_t> newBytes(replacement);
+    if (current != oldBytes && current != newBytes)
+        return false;
+    if (current == oldBytes)
+        mem::patch(address, newBytes);
+    return true;
+}
+
+static void CompatibilityPatches()
+{
+    // 以下五处写入逐字节迁移自 ijl15_jp.dll!app.init（RVA 0x15F0）。
+    // 旧实现只检查地址可读性；这里额外校验原始字节，并允许重复执行时保持幂等。
+
+    // app.init 写入块 RVA 0x1607：将代码页参数从 936 改为 UTF-8 的 65001。
+    PatchBytes(0x00423EB0,
+        { 0x68, 0xA8, 0x03, 0x00, 0x00 },
+        { 0x68, 0xE9, 0xFD, 0x00, 0x00 });
+
+    // app.init 写入块 RVA 0x1672。
+    PatchBytes(0x00F54606, { 0x74 }, { 0xEB });
+
+    // app.init 写入块 RVA 0x16B6。
+    PatchBytes(0x01189628,
+        { 0x0F, 0xB7, 0x46, 0x01, 0x57, 0x83, 0xF8, 0x57, 0x7F, 0x15, 0x74, 0x1A },
+        { 0x0F, 0xB7, 0x46, 0x07, 0x57, 0x83, 0xF8, 0x00, 0x7F, 0x1C, 0x74, 0x0A });
+
+    // app.init 写入块 RVA 0x1774。
+    PatchBytes(0x013753A8, { 0x75, 0x3F }, { 0xEB, 0x3F });
+
+    // app.init 写入块 RVA 0x17C6。
+    PatchBytes(0x01CBFC00,
+        { 0xBF, 0x06, 0x00, 0x00, 0x00 },
+        { 0xBF, 0x03, 0x00, 0x00, 0x00 });
+}
+
+// 迁移自 ijl15_jp.dll!app.writeByteArray（RVA 0x1440）。
+extern "C" __declspec(dllexport) BOOL ClientPatchWriteByteArray(
+    void* destination, const void* source, unsigned int size)
+{
+    if (!destination || (size != 0 && !source) ||
+        IsBadReadPtr(source, size) || IsBadWritePtr(destination, size))
+        return FALSE;
+
+    DWORD oldProtection = 0;
+    if (!VirtualProtect(destination, size, PAGE_EXECUTE_READWRITE, &oldProtection))
+        return FALSE;
+
+    if (size != 0)
+        std::memcpy(destination, source, size);
+    FlushInstructionCache(GetCurrentProcess(), destination, size);
+
+    DWORD ignored = 0;
+    const BOOL restored = VirtualProtect(
+        destination, size, oldProtection, &ignored);
+    return restored;
+}
+
+// 迁移自 ijl15_jp.dll!app.registerNOTIPacketHandler（RVA 0x1840）。
+extern "C" __declspec(dllexport) int ClientPatchRegisterNOTIPacketHandler(
+    void* context, uintptr_t argument1, uintptr_t argument2, uintptr_t argument3)
+{
+    const auto function = reinterpret_cast<RegisterNotiPacketHandler>(
+        kRegisterNotiPacketHandler);
+    return function(context, argument1, argument2, argument3);
+}
+
+// 迁移自 ijl15_jp.dll!app.registerNOTIPacketHandler2（RVA 0x1870）。
+extern "C" __declspec(dllexport) int ClientPatchRegisterNOTIPacketHandler2(
+    void* context, uintptr_t argument1, uintptr_t argument2, uintptr_t argument3)
+{
+    const auto function = reinterpret_cast<RegisterNotiPacketHandler>(
+        kRegisterNotiPacketHandler);
+    return function(context, argument1, argument2, argument3);
+}
+
+// 迁移自 ijl15_jp.dll!app.writeMessage（RVA 0x18A0）。
+extern "C" __declspec(dllexport) int ClientPatchWriteMessage(
+    void* context, uintptr_t argument1, uintptr_t argument2, uintptr_t argument3)
+{
+    const auto function = reinterpret_cast<WriteMessage>(kWriteMessage);
+    return function(context, argument1, argument2, argument3, 0, 0, 0);
+}
+
+// 迁移自 ijl15_jp.dll!app.getMessageWindowPointer（RVA 0x18D0）。
+extern "C" __declspec(dllexport) void* ClientPatchGetMessageWindowPointer()
+{
+    return *reinterpret_cast<void**>(kMessageWindowPointer);
+}
+
+// 迁移自 ijl15_jp.dll!app.getGameSocketPointer（RVA 0x18E0）。
+// 原函数返回的是全局槽位地址，不读取槽位内容。
+extern "C" __declspec(dllexport) void* ClientPatchGetGameSocketPointer()
+{
+    return reinterpret_cast<void*>(kGameSocketPointer);
+}
 
 static void StaticPatches()
 {
@@ -23,7 +147,6 @@ static void StaticPatches()
     // --- Version/signature compatibility ---
 
     // #1: SetCodePage GBK(936)→UTF-8(65001)
-    mem::patch(0x00423EB1, { 0xE9, 0xFD });
 
     // #21: bypass version signature 0x1B412 check (JZ→JMP)
     mem::patch(0x01520157, { 0xEB });
@@ -67,6 +190,8 @@ static void StaticPatches()
         0x55, 0x8B, 0xEC, 0x56, 0x8B, 0x75, 0x10, 0x56, 0xFF, 0x75, 0x0C, 0xFF, 0x75, 0x14, 0xFF, 0x15,
         0xAC, 0x23, 0x71, 0x04, 0x8B, 0x45, 0x18, 0x83, 0xC4, 0x0C, 0x89, 0x30, 0xB0, 0x01, 0x5E, 0x5D,
         0xC2, 0x14, 0x00 });
+
+    CompatibilityPatches();
 }
 
 // nengine::ISocket::Write replacement — bypass VM at 0x04CFF9AB
@@ -142,7 +267,20 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD reason, LPVOID lpReserved)
     if (reason == DLL_PROCESS_ATTACH)
     {
         DisableThreadLibraryCalls(hModule);
+
+        // ijl15_jp.dll 原先由 app.attach（RVA 0x1320）临时 Hook
+        // winmm!timeGetTime，再由 app.entry（RVA 0x1510）恢复原指令并调用
+        // app.init。GameGaurd 被加载时客户端代码已经解压，因此直接应用补丁，
+        // 不再复制这段一次性 Hook，也不增加等待逻辑。
         PatchS4A12();
+
+        HANDLE thread = CreateThread(nullptr, 0,
+            [](LPVOID context) -> DWORD {
+                plugin_loader::LoadConfiguredPlugins(static_cast<HMODULE>(context));
+                return 0;
+            }, hModule, 0, nullptr);
+        if (thread)
+            CloseHandle(thread);
     }
     return TRUE;
 }
