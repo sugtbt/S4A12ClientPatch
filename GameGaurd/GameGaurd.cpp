@@ -238,14 +238,6 @@ static int __fastcall Hook_ISocketWrite(void* this_ptr, void* /*edx*/, char* buf
     return 0;
 }
 
-static void* __cdecl Hook_BeforeLoadAndValidatePvfFile(int arg)
-{
-    const static wchar_t headPtr[] = L"HeaD";
-    for (int i = 0; i < 4; i++)
-        *(uint8_t*)(0x04440C10 + i) ^= 0x55;
-    return (void*)headPtr;
-}
-
 // ============================================================
 // Entry point
 // ============================================================
@@ -256,9 +248,6 @@ void PatchS4A12()
 
     // nengine::ISocket::Write — staging append (reversed from MakePacket/TCP_SEND)
     mem::jmphook(0x04CFF9AB, reinterpret_cast<uintptr_t>(Hook_ISocketWrite));
-
-    // PVF key toggle
-    mem::callhook(0x02492FB5, reinterpret_cast<uintptr_t>(Hook_BeforeLoadAndValidatePvfFile));
 }
 
 
