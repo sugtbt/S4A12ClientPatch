@@ -3,14 +3,14 @@ name: Sync Upstream and Build C++ Release
 on:
   workflow_dispatch:
   schedule:
-    - cron: '0 0 * * *' # 每天定时检查，可按需修改
+    - cron: '0 0 * * *'
 
 permissions:
   contents: write
 
 jobs:
   sync-and-build:
-    runs-on: windows-latest # 必须使用 Windows 环境以支持 VS2022 和 MSBuild
+    runs-on: windows-latest
     
     steps:
       - name: Checkout repository
@@ -28,7 +28,6 @@ jobs:
           git remote add upstream https://gitgud.io/rewio/S4A12ClientPatch.git || true
           git fetch upstream
           
-          # 自动检测上游默认分支
           UPSTREAM_BRANCH=$(git symbolic-ref refs/remotes/upstream/HEAD 2>/dev/null | sed 's@^refs/remotes/upstream/@@' || echo "")
           if [ -z "$UPSTREAM_BRANCH" ]; then
             if git show-ref --verify --quiet refs/remotes/upstream/main; then
@@ -54,6 +53,11 @@ jobs:
             echo "HAS_UPDATE=false" >> $GITHUB_ENV
           fi
 
+          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+            echo "Manual trigger detected. Forcing build and release."
+            echo "HAS_UPDATE=true" >> $GITHUB_ENV
+          fi
+
       - name: Setup MSBuild (VS2022)
         if: env.HAS_UPDATE == 'true'
         uses: microsoft/setup-msbuild@v2
@@ -62,11 +66,9 @@ jobs:
         if: env.HAS_UPDATE == 'true'
         shell: pwsh
         run: |
-          # 递归查找解决方案或项目文件
           $slns = Get-ChildItem -Path . -Filter *.sln -Recurse
           $projs = Get-ChildItem -Path . -Filter *.vcxproj -Recurse
           
-          # 优先编译 sln，如果没有则编译 vcxproj
           $buildFiles = if ($slns.Count -gt 0) { $slns } else { $projs }
           
           if ($buildFiles.Count -eq 0) {
@@ -76,7 +78,6 @@ jobs:
 
           foreach ($file in $buildFiles) {
             Write-Host "Building $($file.FullName)..."
-            # x86 架构在 C++ MSBuild 中通常映射为 Win32。如果项目特殊配置为 x86，请将 Win32 改为 x86
             msbuild $file.FullName /p:Configuration=Release /p:Platform=Win32 /m /v:minimal
             if ($LASTEXITCODE -ne 0) {
               Write-Error "Build failed for $($file.FullName)"
@@ -90,7 +91,6 @@ jobs:
         run: |
           New-Item -ItemType Directory -Force -Path ./publish
           
-          # 查找 Release 目录下的 DLL，并排除常见的 C++ 系统运行库
           $dlls = Get-ChildItem -Path . -Recurse -Filter *.dll | Where-Object { 
             $_.DirectoryName -match 'Release' -and 
             $_.Name -notmatch '^(vcruntime|msvcp|ucrt|concrt|vccorlib|msvcr|api-ms)' 
