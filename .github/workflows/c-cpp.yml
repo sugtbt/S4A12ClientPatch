@@ -1,0 +1,122 @@
+name: Sync Upstream and Build C++ Release
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 0 * * *' # 每天定时检查，可按需修改
+
+permissions:
+  contents: write
+
+jobs:
+  sync-and-build:
+    runs-on: windows-latest # 必须使用 Windows 环境以支持 VS2022 和 MSBuild
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 
+          
+      - name: Sync upstream via Merge
+        id: sync
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          
+          git remote add upstream https://gitgud.io/rewio/S4A12ClientPatch.git || true
+          git fetch upstream
+          
+          # 自动检测上游默认分支
+          UPSTREAM_BRANCH=$(git symbolic-ref refs/remotes/upstream/HEAD 2>/dev/null | sed 's@^refs/remotes/upstream/@@' || echo "")
+          if [ -z "$UPSTREAM_BRANCH" ]; then
+            if git show-ref --verify --quiet refs/remotes/upstream/main; then
+              UPSTREAM_BRANCH="main"
+            else
+              UPSTREAM_BRANCH="master"
+            fi
+          fi
+          
+          echo "Merging from upstream/$UPSTREAM_BRANCH"
+          BEFORE_COMMIT=$(git rev-parse HEAD)
+          
+          git merge "upstream/$UPSTREAM_BRANCH" --no-edit --allow-unrelated-histories || echo "Merge completed or already up to date."
+          
+          AFTER_COMMIT=$(git rev-parse HEAD)
+          
+          if [ "$BEFORE_COMMIT" != "$AFTER_COMMIT" ]; then
+            echo "Updates found. Pushing merge commit..."
+            git push origin HEAD:${{ github.ref }}
+            echo "HAS_UPDATE=true" >> $GITHUB_ENV
+          else
+            echo "No updates from upstream."
+            echo "HAS_UPDATE=false" >> $GITHUB_ENV
+          fi
+
+      - name: Setup MSBuild (VS2022)
+        if: env.HAS_UPDATE == 'true'
+        uses: microsoft/setup-msbuild@v2
+
+      - name: Build C++ Projects
+        if: env.HAS_UPDATE == 'true'
+        shell: pwsh
+        run: |
+          # 递归查找解决方案或项目文件
+          $slns = Get-ChildItem -Path . -Filter *.sln -Recurse
+          $projs = Get-ChildItem -Path . -Filter *.vcxproj -Recurse
+          
+          # 优先编译 sln，如果没有则编译 vcxproj
+          $buildFiles = if ($slns.Count -gt 0) { $slns } else { $projs }
+          
+          if ($buildFiles.Count -eq 0) {
+            Write-Error "No .sln or .vcxproj files found."
+            exit 1
+          }
+
+          foreach ($file in $buildFiles) {
+            Write-Host "Building $($file.FullName)..."
+            # x86 架构在 C++ MSBuild 中通常映射为 Win32。如果项目特殊配置为 x86，请将 Win32 改为 x86
+            msbuild $file.FullName /p:Configuration=Release /p:Platform=Win32 /m /v:minimal
+            if ($LASTEXITCODE -ne 0) {
+              Write-Error "Build failed for $($file.FullName)"
+              exit 1
+            }
+          }
+
+      - name: Package DLLs
+        if: env.HAS_UPDATE == 'true'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path ./publish
+          
+          # 查找 Release 目录下的 DLL，并排除常见的 C++ 系统运行库
+          $dlls = Get-ChildItem -Path . -Recurse -Filter *.dll | Where-Object { 
+            $_.DirectoryName -match 'Release' -and 
+            $_.Name -notmatch '^(vcruntime|msvcp|ucrt|concrt|vccorlib|msvcr|api-ms)' 
+          }
+          
+          if ($dlls.Count -eq 0) {
+            Write-Warning "No DLLs found in Release directories. Falling back to all non-system DLLs."
+            $dlls = Get-ChildItem -Path . -Recurse -Filter *.dll | Where-Object { $_.Name -notmatch '^(vcruntime|msvcp|ucrt|concrt|vccorlib|msvcr|api-ms)' }
+          }
+          
+          Write-Host "Found $($dlls.Count) target DLLs:"
+          $dlls | ForEach-Object { 
+            Write-Host $_.FullName
+            Copy-Item $_.FullName -Destination ./publish/ -Force
+          }
+          
+          Compress-Archive -Path ./publish/* -DestinationPath ./S4A12ClientPatch-Release.zip -Force
+
+      - name: Create GitHub Release
+        if: env.HAS_UPDATE == 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: S4A12ClientPatch-Release.zip
+          tag_name: build-${{ github.run_number }}
+          name: Release Build ${{ github.run_number }}
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
