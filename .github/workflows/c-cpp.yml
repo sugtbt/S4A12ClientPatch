@@ -62,14 +62,13 @@ jobs:
         if: env.HAS_UPDATE == 'true'
         uses: microsoft/setup-msbuild@v2
 
-      - name: Build C++ Projects
+      - name: Build C++ Projects (sln/vcxproj)
         if: env.HAS_UPDATE == 'true'
         shell: pwsh
         run: |
           $slns = Get-ChildItem -Path . -Filter *.sln -Recurse
           $projs = Get-ChildItem -Path . -Filter *.vcxproj -Recurse
           
-          # 优先编译 sln，如果没有则编译 vcxproj
           $buildFiles = if ($slns.Count -gt 0) { $slns } else { $projs }
           
           if ($buildFiles.Count -eq 0) {
@@ -79,7 +78,6 @@ jobs:
 
           foreach ($file in $buildFiles) {
             Write-Host "Building $($file.FullName)..."
-            # 关键修复：.sln 文件在解决方案级别使用 'x86'，而 .vcxproj 项目级别使用 'Win32'
             $platform = if ($file.Extension -eq '.sln') { 'x86' } else { 'Win32' }
             
             msbuild $file.FullName /p:Configuration=Release /p:Platform=$platform /m /v:minimal
@@ -89,21 +87,33 @@ jobs:
             }
           }
 
+      - name: Setup MSVC Dev Cmd (x86)
+        if: env.HAS_UPDATE == 'true'
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x86
+
+      - name: Build Az DLL via cl.exe
+        if: env.HAS_UPDATE == 'true'
+        shell: cmd
+        run: |
+          cd Az
+          cl /LD /EHsc /O2 az.cpp /link user32.lib psapi.lib
+
       - name: Package DLLs
         if: env.HAS_UPDATE == 'true'
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path ./publish
           
-          # 查找 Release 目录下的 DLL，并排除常见的 C++ 系统运行库
+          # 查找 Release 目录下的 DLL，以及 Az 目录下生成的 DLL，并排除系统运行库
           $dlls = Get-ChildItem -Path . -Recurse -Filter *.dll | Where-Object { 
-            $_.DirectoryName -match 'Release' -and 
+            ($_.DirectoryName -match 'Release' -or $_.DirectoryName -match '\\Az$') -and 
             $_.Name -notmatch '^(vcruntime|msvcp|ucrt|concrt|vccorlib|msvcr|api-ms)' 
           }
           
           if ($dlls.Count -eq 0) {
-            Write-Warning "No DLLs found in Release directories. Falling back to all non-system DLLs."
-            $dlls = Get-ChildItem -Path . -Recurse -Filter *.dll | Where-Object { $_.Name -notmatch '^(vcruntime|msvcp|ucrt|concrt|vccorlib|msvcr|api-ms)' }
+            Write-Warning "No target DLLs found."
           }
           
           Write-Host "Found $($dlls.Count) target DLLs:"
