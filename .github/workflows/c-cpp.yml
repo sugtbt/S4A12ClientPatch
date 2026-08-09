@@ -69,6 +69,7 @@ jobs:
           $slns = Get-ChildItem -Path . -Filter *.sln -Recurse
           $projs = Get-ChildItem -Path . -Filter *.vcxproj -Recurse
           
+          # 优先编译 sln，如果没有则编译 vcxproj
           $buildFiles = if ($slns.Count -gt 0) { $slns } else { $projs }
           
           if ($buildFiles.Count -eq 0) {
@@ -78,7 +79,10 @@ jobs:
 
           foreach ($file in $buildFiles) {
             Write-Host "Building $($file.FullName)..."
-            msbuild $file.FullName /p:Configuration=Release /p:Platform=Win32 /m /v:minimal
+            # 关键修复：.sln 文件在解决方案级别使用 'x86'，而 .vcxproj 项目级别使用 'Win32'
+            $platform = if ($file.Extension -eq '.sln') { 'x86' } else { 'Win32' }
+            
+            msbuild $file.FullName /p:Configuration=Release /p:Platform=$platform /m /v:minimal
             if ($LASTEXITCODE -ne 0) {
               Write-Error "Build failed for $($file.FullName)"
               exit 1
@@ -91,6 +95,7 @@ jobs:
         run: |
           New-Item -ItemType Directory -Force -Path ./publish
           
+          # 查找 Release 目录下的 DLL，并排除常见的 C++ 系统运行库
           $dlls = Get-ChildItem -Path . -Recurse -Filter *.dll | Where-Object { 
             $_.DirectoryName -match 'Release' -and 
             $_.Name -notmatch '^(vcruntime|msvcp|ucrt|concrt|vccorlib|msvcr|api-ms)' 
